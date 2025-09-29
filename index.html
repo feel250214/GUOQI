@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>图像编辑器</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            /*overflow: hidden;*/
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            background: #333;
+            color: white;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        header input, header button { padding: 0.3rem; }
+        header button {
+            cursor: pointer;
+            border: none;
+            background: #4caf50;
+            color: white;
+            border-radius: 4px;
+        }
+        header button:hover { background: #45a049; }
+
+        #main {
+            flex: 1;
+            display: flex;
+            /*overflow: hidden;*/
+        }
+        #sidebar {
+            width: 200px;
+            background: #fafafa;
+            border-right: 1px solid #ccc;
+            overflow-y: auto;
+            padding: 0.5rem;
+            transition: transform 0.3s ease;
+        }
+        #sidebar.hidden { transform: translateX(-100%); }
+        #sidebar img {
+            width: 100%;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            border: 1px solid #ddd;
+        }
+        #sidebar img:hover { border-color: #333; }
+
+        #canvas-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #f0f0f0;
+            position: relative;
+            /*overflow: hidden; */
+        }
+        #canvas-wrapper {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #canvas-wrapper img {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain; /* 保持比例缩放，完整显示 */
+        }
+        .sticker {
+            position: absolute;
+            cursor: move;
+            transform-origin: center center;
+            touch-action: none;
+        }
+        .selected { outline: 2px solid blue; }
+
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.9);
+            padding: 0.5rem;
+            border-radius: 5px;
+            display: flex;
+            gap: 0.3rem;
+            flex-wrap: wrap;
+        }
+        #controls button { font-size: 0.8rem; padding: 0.3rem 0.5rem; }
+
+        /* 移动端 */
+        @media (max-width: 768px) {
+            #sidebar { position: absolute; top: 50px; left: 0; height: calc(100% - 50px); z-index: 1000; }
+            #toggleSidebar { display: inline-block; }
+        }
+        @media (min-width: 769px) {
+            #toggleSidebar { display: none; }
+        }
+
+        /* 长按菜单 */
+        #contextMenu {
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            display: none;
+            flex-direction: column;
+            z-index: 2000;
+        }
+        #contextMenu button {
+            border: none;
+            background: white;
+            padding: 0.5rem 1rem;
+            text-align: left;
+            cursor: pointer;
+        }
+        #contextMenu button:hover { background: #eee; }
+    </style>
+</head>
+<body>
+<!-- 顶部工具栏 -->
+<header>
+    <label style="color:white;">头像: <input type="file" id="bgUpload" accept="image/*" /></label>
+    <label style="color:white;">贴图: <input type="file" id="stickerUpload" accept="image/*" multiple /></label>
+    <button id="exportBtn">导出PNG</button>
+    <button id="toggleSidebar">贴图库</button>
+</header>
+
+<!-- 主区域 -->
+<div id="main">
+    <aside id="sidebar">
+        <h3>贴图库</h3>
+        <img src="./stickers/flag.svg" alt="star" onclick="addStickerFromList(this.src)">
+        <img src="./stickers/国旗1024.png" alt="heart" onclick="addStickerFromList(this.src)">
+        <img src="./stickers/队伍.svg" alt="emoji" onclick="addStickerFromList(this.src)">
+    </aside>
+    <div id="canvas-container">
+        <div id="canvas-wrapper">
+            <img id="background" alt="背景" src="backgrounds/庆.png"/>
+            <canvas id="exportCanvas" style="display:none;"></canvas>
+        </div>
+        <div id="controls"></div>
+    </div>
+</div>
+
+<!-- 长按菜单（手机端） -->
+<div id="contextMenu">
+    <button onclick="deleteSelected()">删除贴图</button>
+    <button onclick="undo()">撤销</button>
+    <button onclick="redo()">重做</button>
+</div>
+
+<script>
+    const bgUpload = document.getElementById("bgUpload");
+    const bgImg = document.getElementById("background");
+    const stickerUpload = document.getElementById("stickerUpload");
+    const exportBtn = document.getElementById("exportBtn");
+    const canvas = document.getElementById("exportCanvas");
+    const wrapper = document.getElementById("canvas-wrapper");
+    const controls = document.getElementById("controls");
+    const sidebar = document.getElementById("sidebar");
+    const toggleSidebarBtn = document.getElementById("toggleSidebar");
+    const contextMenu = document.getElementById("contextMenu");
+
+    let stickers = [];
+    let selected = null;
+    let history = [];
+    let redoStack = [];
+
+    toggleSidebarBtn.addEventListener("click", () => {
+        sidebar.classList.toggle("hidden");
+    });
+
+    // 保存历史
+    function saveHistory() {
+        const state = {
+            bg: bgImg.src,
+            stickers: stickers.map(st => ({
+                src: st.src,
+                left: st.style.left,
+                top: st.style.top,
+                scale: st.dataset.scale,
+                rotation: st.dataset.rotation,
+                flipX: st.dataset.flipX,
+                flipY: st.dataset.flipY
+            }))
+        };
+        history.push(JSON.stringify(state));
+        redoStack = [];
+    }
+
+    // 恢复历史
+    function restore(stateStr) {
+        const state = JSON.parse(stateStr);
+        bgImg.src = state.bg;
+        stickers.forEach(st => st.remove());
+        stickers = [];
+        state.stickers.forEach(data => {
+            const img = document.createElement("img");
+            img.src = data.src;
+            img.className = "sticker";
+            img.style.left = data.left;
+            img.style.top = data.top;
+            img.dataset.scale = data.scale;
+            img.dataset.rotation = data.rotation;
+            img.dataset.flipX = data.flipX;
+            img.dataset.flipY = data.flipY;
+            wrapper.appendChild(img);
+            stickers.push(img);
+            applyTransform(img);
+            enableDragAndTouch(img);
+        });
+        deselectSticker();
+    }
+
+    function undo() {
+        if (history.length > 1) {
+            redoStack.push(history.pop());
+            restore(history[history.length - 1]);
+        }
+    }
+    function redo() {
+        if (redoStack.length > 0) {
+            const state = redoStack.pop();
+            history.push(state);
+            restore(state);
+        }
+    }
+
+    // 背景上传
+    bgUpload.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            bgImg.src = ev.target.result;
+            saveHistory();
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 添加到贴图库
+    function addStickerToSidebar(url) {
+        const img = document.createElement("img");
+        img.src = url;
+        img.onclick = () => addSticker(url);
+        sidebar.appendChild(img);
+    }
+    // 贴图上传
+    stickerUpload.addEventListener("change", e => {
+        const files = Array.from(e.target.files);
+        files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = ev => {
+                const dataURL = ev.target.result;
+                addSticker(dataURL);          // 添加到画布
+                addStickerToSidebar(dataURL); // 添加到贴图库
+            };
+            reader.readAsDataURL(file);
+        });
+        stickerUpload.value = "";
+    });
+
+    // 添加贴图（图库或文件上传）
+    function addStickerFromList(url) { addSticker(url); }
+    function addSticker(url) {
+        const img = document.createElement("img");
+        img.src = url;
+        img.className = "sticker";
+        img.style.left = "150px";
+        img.style.top = "150px";
+        img.dataset.scale = "1";
+        img.dataset.rotation = "0";
+        img.dataset.flipX = "false";
+        img.dataset.flipY = "false";
+        wrapper.appendChild(img);
+        stickers.push(img);
+        enableDragAndTouch(img);
+        saveHistory();
+    }
+
+    // 选择贴图
+    function selectSticker(img) {
+        if (selected) selected.classList.remove("selected");
+        selected = img;
+        img.classList.add("selected");
+        updateControls();
+    }
+    // 删除贴图
+    function deselectSticker() {
+        if (selected) selected.classList.remove("selected");
+        selected = null;
+        controls.innerHTML = "";
+    }
+
+    // 删除
+    function deleteSelected() {
+        if (selected) {
+            stickers = stickers.filter(st => st !== selected);
+            selected.remove();
+            selected = null;
+            controls.innerHTML = "";
+            saveHistory();
+        }
+        contextMenu.style.display = "none";
+    }
+
+    // 控制按钮
+    function updateControls() {
+        controls.innerHTML = "";
+        if (!selected) return;
+        const buttons = [
+            { text: "旋转+15°", action: () => rotate(15) },
+            { text: "放大", action: () => scale(1.1) },
+            { text: "缩小", action: () => scale(0.9) },
+            { text: "水平翻转", action: () => flip("X") },
+            { text: "垂直翻转", action: () => flip("Y") },
+        ];
+        buttons.forEach(b => {
+            const btn = document.createElement("button");
+            btn.textContent = b.text;
+            btn.onclick = b.action;
+            controls.appendChild(btn);
+        });
+    }
+
+    // 变换
+    function applyTransform(img) {
+        const scale = parseFloat(img.dataset.scale);
+        const rot = parseFloat(img.dataset.rotation);
+        const fx = img.dataset.flipX === "true" ? -1 : 1;
+        const fy = img.dataset.flipY === "true" ? -1 : 1;
+        img.style.transform = `translate(-50%, -50%) scale(${fx},${fy}) scale(${scale}) rotate(${rot}deg)`;
+    }
+    function rotate(d) { if (!selected) return; selected.dataset.rotation = (parseFloat(selected.dataset.rotation) + d).toString(); applyTransform(selected); saveHistory(); }
+    function scale(f) { if (!selected) return; selected.dataset.scale = (parseFloat(selected.dataset.scale) * f).toString(); applyTransform(selected); saveHistory(); }
+    function flip(axis) { if (!selected) return; if (axis==="X") selected.dataset.flipX = selected.dataset.flipX==="true"?"false":"true"; if(axis==="Y") selected.dataset.flipY = selected.dataset.flipY==="true"?"false":"true"; applyTransform(selected); saveHistory(); }
+
+    // 拖拽/触摸/长按
+    function enableDragAndTouch(img) {
+        img.addEventListener("mousedown", e => {
+            e.preventDefault();
+            selectSticker(img);
+            let startX = e.clientX, startY = e.clientY;
+            const onMove = ev => { img.style.left = (img.offsetLeft + (ev.clientX - startX)) + "px"; img.style.top = (img.offsetTop + (ev.clientY - startY)) + "px"; startX = ev.clientX; startY = ev.clientY; };
+            const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); saveHistory(); };
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onUp);
+        });
+
+        // 手机长按菜单
+        let longPressTimer;
+        img.addEventListener("touchstart", e => {
+            selectSticker(img);
+            longPressTimer = setTimeout(() => { contextMenu.style.display="flex"; contextMenu.style.left=e.touches[0].clientX+"px"; contextMenu.style.top=e.touches[0].clientY+"px"; }, 600);
+        });
+        img.addEventListener("touchend", () => clearTimeout(longPressTimer));
+
+        // 移动端拖拽/缩放/旋转
+        let startDist = 0, startAngle = 0, startScale = 1, startRotation = 0;
+        img.addEventListener("touchstart", e => {
+            if (e.touches.length === 2) {
+                const [t1,t2] = e.touches;
+                startDist = Math.hypot(t2.clientX-t1.clientX,t2.clientY-t1.clientY);
+                startAngle = Math.atan2(t2.clientY-t1.clientY,t2.clientX-t1.clientX);
+                startScale = parseFloat(img.dataset.scale);
+                startRotation = parseFloat(img.dataset.rotation);
+            }
+        }, { passive:false });
+        img.addEventListener("touchmove", e => {
+            e.preventDefault();
+            if(e.touches.length===2){
+                const [t1,t2]=e.touches;
+                const dist=Math.hypot(t2.clientX-t1.clientX,t2.clientY-t1.clientY);
+                const angle=Math.atan2(t2.clientY-t1.clientY,t2.clientX-t1.clientX);
+                img.dataset.scale=(startScale*(dist/startDist)).toString();
+                img.dataset.rotation=(startRotation+((angle-startAngle)*180/Math.PI)).toString();
+                applyTransform(img);
+            }
+        }, { passive:false });
+    }
+
+    // 导出 PNG
+    exportBtn.addEventListener("click", async () => {
+        if (!bgImg.src) return;
+        const ctx = canvas.getContext("2d");
+        const bg = new Image();
+        bg.src = bgImg.src;
+        bg.onload = async () => {
+            canvas.width = bg.width;
+            canvas.height = bg.height;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(bg,0,0);
+            for(let st of stickers){
+                await new Promise(resolve=>{
+                    const img=new Image();
+                    img.src=st.src;
+                    img.onload=()=>{
+                        ctx.save();
+                        const scaleX = bg.width / bgImg.clientWidth;
+                        const scaleY = bg.height / bgImg.clientHeight;
+                        const rectBg = bgImg.getBoundingClientRect();
+                        const rectSt = st.getBoundingClientRect();
+                        const centerX = (rectSt.left + rectSt.width/2 - rectBg.left) * scaleX;
+                        const centerY = (rectSt.top + rectSt.height/2 - rectBg.top) * scaleY;
+                        const scale = parseFloat(st.dataset.scale);
+                        const rot = parseFloat(st.dataset.rotation) * Math.PI/180;
+                        const fx = st.dataset.flipX==="true"?-1:1;
+                        const fy = st.dataset.flipY==="true"?-1:1;
+                        ctx.translate(centerX,centerY);
+                        ctx.scale(fx,fy);
+                        ctx.scale(scale*scaleX,scale*scaleY);
+                        ctx.rotate(rot);
+                        ctx.drawImage(img,-img.width/2,-img.height/2);
+                        ctx.restore();
+                        resolve(true);
+                    };
+                });
+            }
+            const blob = await new Promise(res=>canvas.toBlob(res,"image/png"));
+            const link = document.createElement("a");
+            link.download="export.png";
+            link.href=URL.createObjectURL(blob);
+            link.click();
+        };
+    });
+
+    // PC 快捷键
+    document.addEventListener("keydown", e => {
+        if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+        if ((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){ if(e.shiftKey) redo(); else undo(); }
+        if ((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="y") redo();
+    });
+
+    // 初始化
+    saveHistory();
+</script>
+</body>
+</html>
+
