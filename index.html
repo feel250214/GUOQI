@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>国庆头像编辑器</title>
+    <link rel="icon" type="image/png" href="bitbug_favicon.ico">
+    <link rel="shortcut icon" href="bitbug_favicon.ico">
     <style>
         html, body {
             margin: 0;
@@ -45,7 +47,6 @@
             padding: 0.5rem;
             transition: transform 0.3s ease;
         }
-        #sidebar.hidden { transform: translateX(-100%); }
         #sidebar img {
             width: 100%;
             margin-bottom: 0.5rem;
@@ -75,13 +76,6 @@
             max-height: 100%;
             object-fit: contain; /* 保持比例缩放，完整显示 */
         }
-        .sticker {
-            position: absolute;
-            cursor: move;
-            transform-origin: center center;
-            touch-action: none;
-        }
-        .selected { outline: 2px solid blue; }
 
         #controls {
             position: absolute;
@@ -129,8 +123,6 @@
 <body>
 <!-- 顶部工具栏 -->
 <header>
-    <link rel="icon" type="image/png" href="bitbug_favicon.ico">
-    <link rel="shortcut icon" href="bitbug_favicon.ico">
     <label style="color:white;">头像: <input type="file" id="bgUpload" accept="image/*" /></label>
     <label style="color:white;">贴图: <input type="file" id="stickerUpload" accept="image/*" multiple /></label>
     <button id="exportBtn">导出PNG</button>
